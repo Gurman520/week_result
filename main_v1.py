@@ -5,6 +5,8 @@ from typing import Optional
 from pytz import timezone
 from dotenv import load_dotenv
 from os import getenv
+import ollama
+import asyncio
 
 
 import aiosqlite
@@ -46,10 +48,21 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                period_start TEXT NOT NULL,   -- дата начала периода (YYYY-MM-DD)
+                period_start TEXT NOT NULL,
                 content TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, period_start)
+            );
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, year, month)
             );
         """)
         await db.commit()
@@ -115,6 +128,15 @@ async def get_all_active_users():
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT * FROM users WHERE active = 1")
         return await cursor.fetchall()
+    
+async def save_report(user_id: int, year: int, month: int, content: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO reports (user_id, year, month, content) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, year, month) DO UPDATE SET content=excluded.content",
+            (user_id, year, month, content)
+        )
+        await db.commit()
 
 # ------------------- Планировщик напоминаний -------------------
 user_jobs = {}   # {job_id: Job}
@@ -262,6 +284,47 @@ async def debug_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text)
 
+async def list_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    logger.info(f"User {user_id} requested report list")
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT year, month FROM reports WHERE user_id=? ORDER BY year DESC, month DESC",
+            (user_id,)
+        )
+        rows = await cursor.fetchall()
+    if not rows:
+        await update.message.reply_text("У вас пока нет сохранённых отчётов.")
+        return
+    text = "Доступные отчёты:\n"
+    for year, month in rows:
+        text += f"- {year}-{month:02d}\n"
+    text += "\nЧтобы посмотреть отчёт, напишите /report YYYY MM (например /report 2026 5)"
+    await update.message.reply_text(text)
+
+async def view_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Использование: /report ГГГГ ММ (например /report 2026 5)")
+        return
+    try:
+        year = int(context.args[0])
+        month = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Год и месяц должны быть числами.")
+        return
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT content FROM reports WHERE user_id=? AND year=? AND month=?",
+            (user_id, year, month)
+        )
+        row = await cursor.fetchone()
+    if not row:
+        await update.message.reply_text(f"Отчёт за {year}-{month:02d} не найден.")
+        return
+    await update.message.reply_text(f"Отчёт за {year}-{month:02d}:\n\n{row[0]}")
+
 # ------------------- Настройка напоминания (ConversationHandler) -------------------
 FREQ, DAY_WEEK, DAY_MONTH, TIME_INPUT = range(4)
 
@@ -378,24 +441,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"User {user_id} requested summary")
-    
+
     now = datetime.now()
     if now.month == 1:
         year, month = now.year - 1, 12
     else:
         year, month = now.year, now.month - 1
 
-    print(year, month)
     entries = await get_entries_for_month(user_id, year, month)
     if not entries:
+        logger.info(f"No entries for user {user_id} in {month}/{year}")
         await update.message.reply_text(f"За {month}/{year} записей нет.")
         return
 
     combined = "\n---\n".join(entries)
-    # Здесь вызов LLM — пока заглушка
-    llm_response = f"🤖 Саммари за {month}/{year} (заглушка):\n\n{combined[:1000]}..."
-    
-    await update.message.reply_text(llm_response)
+    prompt = (
+        "Ты — персональный ассистент. На основе еженедельных заметок пользователя составь "
+        "краткое структурированное резюме его рабочих достижений за месяц. "
+        "Выдели ключевые проекты, решённые проблемы, полученные навыки. "
+        "Пиши лаконично, без воды, в виде маркированного списка. "
+        f"Заметки:\n{combined}"
+    )
+
+    try:
+        response = await asyncio.to_thread(
+            ollama.chat,
+            model='qwen2.5:0.5b-instruct-q4_K_M',
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        summary_text = response['message']['content']
+        logger.info(f"LLM summary generated for user {user_id}")
+
+        # Сохраняем отчёт в БД
+        await save_report(user_id, year, month, summary_text)
+
+        await update.message.reply_text(f"Саммари за {month}/{year}:\n\n{summary_text}")
+    except Exception as e:
+        logger.error(f"LLM call failed for user {user_id}: {e}")
+        await update.message.reply_text(
+            "Не удалось связаться с локальной моделью. Проверьте, что Ollama запущена и модель доступна."
+        )
 
 # ------------------- Запуск приложения -------------------
 
@@ -408,6 +493,8 @@ def main():
     app.add_handler(CommandHandler("summary", summary))
     app.add_handler(CommandHandler("jobs", list_jobs)) 
     app.add_handler(CommandHandler("time", debug_time))
+    app.add_handler(CommandHandler("reports", list_reports))
+    app.add_handler(CommandHandler("report", view_report))
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
