@@ -444,8 +444,8 @@ FREQ, DAY_WEEK, DAY_MONTH, TIME_INPUT = range(4)
 async def set_reminder_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("Каждый день", callback_data="day"),
-         InlineKeyboardButton("Раз в неделю", callback_data="week"),
-         InlineKeyboardButton("Раз в месяц", callback_data="month")]
+         InlineKeyboardButton("Раз в неделю", callback_data="week")] #,
+         # InlineKeyboardButton("Раз в месяц", callback_data="month")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Выбери частоту напоминаний:", reply_markup=reply_markup)
@@ -627,7 +627,7 @@ async def set_bot_commands(application: Application):
         BotCommand("reports", "Список сохранённых отчётов"),
         BotCommand("report", "Показать конкретный отчёт (пример: /report 2026 5)"),
         BotCommand("time", "Показать текущее время системы и напоминания"),
-        BotCommand("jobs", "Список активных задач напоминаний (отладка)"),
+        # BotCommand("jobs", "Список активных задач напоминаний (отладка)"),
         BotCommand("set_timezone", "Изменить часовой пояс"),
     ]
     await application.bot.set_my_commands(commands)
