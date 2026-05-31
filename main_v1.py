@@ -2,15 +2,15 @@ import asyncio
 import logging
 from datetime import datetime, time, timedelta, date
 from typing import Optional
-from pytz import timezone
 from dotenv import load_dotenv
 from os import getenv
 import ollama
 import asyncio
+from pytz import timezone as pytz_timezone
 
 
 import aiosqlite
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Defaults,
     Application,
@@ -41,6 +41,7 @@ async def init_db():
                 day_of_month INTEGER DEFAULT 1,
                 time_hour INTEGER DEFAULT 18,
                 time_minute INTEGER DEFAULT 0,
+                timezone TEXT DEFAULT 'UTC',
                 active INTEGER DEFAULT 1
             );
         """)
@@ -138,6 +139,11 @@ async def save_report(user_id: int, year: int, month: int, content: str):
         )
         await db.commit()
 
+async def set_user_timezone(user_id: int, tz_str: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE users SET timezone=? WHERE user_id=?", (tz_str, user_id))
+        await db.commit()
+
 # ------------------- Планировщик напоминаний -------------------
 user_jobs = {}   # {job_id: Job}
 
@@ -177,23 +183,28 @@ def build_job_id(user_id: int) -> str:
     return f"remind_{user_id}"
 
 def schedule_reminder(application: Application, user_data: tuple):
-    """Создаёт или обновляет задание напоминания для пользователя."""
     user_id = user_data[0]
-    freq = user_data[1]      # day / week / month
+    freq = user_data[1]
     day_of_week = user_data[2]
     day_of_month = user_data[3]
     t_hour = user_data[4]
     t_minute = user_data[5]
+    tz_str = get_user_tz(user_data)
 
     job_id = build_job_id(user_id)
-    # Удаляем старое задание, если есть
     if job_id in user_jobs:
         user_jobs[job_id].schedule_removal()
         del user_jobs[job_id]
 
-    when_time = time(hour=t_hour, minute=t_minute)
+    tz = pytz_timezone(tz_str) if tz_str != 'UTC' else None
+    # Создаём aware time, если часовой пояс указан
+    if tz:
+        when_time = time(hour=t_hour, minute=t_minute, tzinfo=tz)
+    else:
+        when_time = time(hour=t_hour, minute=t_minute)
 
     job_data = {'user_id': user_id, 'freq': freq}
+
     if freq == 'day':
         job = application.job_queue.run_daily(
             remind_user, time=when_time, data=job_data
@@ -203,10 +214,8 @@ def schedule_reminder(application: Application, user_data: tuple):
             remind_user, time=when_time, days=(day_of_week,), data=job_data
         )
     elif freq == 'month':
-        # Задание, срабатывающее каждый день в заданное время, но отправляющее напоминание
-        # только если сегодня день месяца == day_of_month.
         async def monthly_check(context):
-            now = datetime.now()
+            now = datetime.now(tz=tz) if tz else datetime.now()
             if now.day == day_of_month:
                 await remind_user(context)
         job = application.job_queue.run_daily(
@@ -216,6 +225,7 @@ def schedule_reminder(application: Application, user_data: tuple):
         return
 
     user_jobs[job_id] = job
+    logger.info(f"Scheduled reminder for user {user_id}: {freq} at {t_hour:02d}:{t_minute:02d} ({tz_str})")
 
 async def restore_reminders(application: Application):
     """Восстанавливает задания для всех активных пользователей при старте."""
@@ -224,25 +234,116 @@ async def restore_reminders(application: Application):
         schedule_reminder(application, user)
 
 # ------------------- Обработчики команд -------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def change_timezone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = await get_user(user_id)
     if not user:
-        # Устанавливаем стандартные настройки
-        await upsert_user(user_id, frequency='week', day_of_week=4, day_of_month=1,
-                          time_hour=18, time_minute=0, active=1)
-        # Планируем напоминание
-        schedule_reminder(context.application, (user_id, 'week', 4, 1, 18, 0))
-        await update.message.reply_text(
-            "Привет! Я бот-трекер достижений. Я буду напоминать тебе записывать успехи.\n"
-            "По умолчанию напоминание — каждую пятницу в 18:00.\n"
-            "Используй /set_reminder, чтобы изменить расписание."
-        )
+        await update.message.reply_text("Сначала зарегистрируйся: /start")
+        return
+    keyboard = [
+        [InlineKeyboardButton("Москва (UTC+3)", callback_data="tz_change=Europe/Moscow")],
+        [InlineKeyboardButton("Екатеринбург (UTC+5)", callback_data="tz_change=Asia/Yekaterinburg")],
+        [InlineKeyboardButton("Новосибирск (UTC+7)", callback_data="tz_change=Asia/Novosibirsk")],
+        [InlineKeyboardButton("UTC", callback_data="tz_change=UTC")],
+        [InlineKeyboardButton("Другой (ввести вручную)", callback_data="tz_change=manual")],
+    ]
+    await update.message.reply_text(
+        "Текущий часовой пояс: " + get_user_tz(user) + "\nВыбери новый:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def change_timezone_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = query.from_user.id
+    if data.startswith("tz_change="):
+        tz_value = data.split("=", 1)[1]
+        if tz_value == "manual":
+            await query.edit_message_text("Введи часовой пояс вручную:")
+            context.user_data['awaiting_timezone_change'] = True
+            return
+        await apply_timezone_change(user_id, tz_value, context, query)
+
+async def apply_timezone_change(user_id, tz_value, context, query=None):
+    try:
+        pytz_timezone(tz_value)
+    except:
+        if query:
+            await query.edit_message_text("Неверный часовой пояс.")
+        else:
+            await context.bot.send_message(chat_id=user_id, text="Неверный часовой пояс.")
+        return
+    await set_user_timezone(user_id, tz_value)
+    user = await get_user(user_id)
+    schedule_reminder(context.application, user)
+    msg = f"Часовой пояс изменён на {tz_value}."
+    if query:
+        await query.edit_message_text(msg)
     else:
+        await context.bot.send_message(chat_id=user_id, text=msg)
+
+def get_user_tz(user_data: tuple) -> str:
+    """Извлекает строку часового пояса из записи пользователя (индекс 6)."""
+    if len(user_data) > 6 and user_data[6]:
+        return user_data[6]
+    return 'UTC'
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "unknown"
+    user = await get_user(user_id)
+    if not user:
+        # Предлагаем выбрать часовой пояс
+        keyboard = [
+            [InlineKeyboardButton("Москва (UTC+3)", callback_data="tz=Europe/Moscow")],
+            [InlineKeyboardButton("Екатеринбург (UTC+5)", callback_data="tz=Asia/Yekaterinburg")],
+            [InlineKeyboardButton("Новосибирск (UTC+7)", callback_data="tz=Asia/Novosibirsk")],
+            [InlineKeyboardButton("UTC", callback_data="tz=UTC")],
+            [InlineKeyboardButton("Другой (ввести вручную)", callback_data="tz=manual")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "Ты уже зарегистрирован. Чтобы изменить настройки, используй /set_reminder.\n"
-            "Чтобы получить сводку за месяц, напиши /summary."
+            "Привет! Я бот-трекер достижений. Выбери свой часовой пояс, чтобы напоминания приходили вовремя:",
+            reply_markup=reply_markup
         )
+        logger.info(f"New user {user_id} (@{username}) prompted for timezone")
+    else:
+        tz_str = get_user_tz(user)
+        await update.message.reply_text(
+            f"Ты уже зарегистрирован. Часовой пояс: {tz_str}.\n"
+            "Используй /set_reminder, чтобы изменить расписание.\n"
+            "Используй /set_timezone, чтобы изменить часовой пояс."
+        )
+
+async def set_timezone_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = query.from_user.id
+
+    if data.startswith("tz="):
+        tz_value = data.split("=", 1)[1]
+        if tz_value == "manual":
+            await query.edit_message_text(
+                "Введи часовой пояс в формате IANA (например, Europe/London, Asia/Tokyo). "
+                "Можно посмотреть список здесь: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones"
+            )
+            context.user_data['awaiting_timezone'] = True
+            return
+        # Сохраняем выбранный пояс
+        await set_user_timezone(user_id, tz_value)
+        # Создаём пользователя с настройками по умолчанию (пятница 18:00) и этим поясом
+        await upsert_user(user_id, frequency='week', day_of_week=4, day_of_month=1,
+                          time_hour=18, time_minute=0, timezone=tz_value, active=1)
+        # Планируем напоминание
+        user_new = await get_user(user_id)
+        schedule_reminder(context.application, user_new)
+        await query.edit_message_text(
+            f"Часовой пояс {tz_value} сохранён. Напоминание установлено на пятницу 18:00 (твоё местное).\n"
+            "Используй /set_reminder для изменения."
+        )
+        logger.info(f"User {user_id} set timezone {tz_value}")
 
 async def list_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -324,6 +425,18 @@ async def view_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Отчёт за {year}-{month:02d} не найден.")
         return
     await update.message.reply_text(f"Отчёт за {year}-{month:02d}:\n\n{row[0]}")
+
+async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    logger.info(f"User {user_id} requested help")
+    
+    text = "Доступные команды:\n" \
+    "1. /set_reminder - изменить расписание\n" \
+    "2.  /set_timezone - изменить часовой пояс\n" \
+    "3. /summary - получить отчет за прошлый месяц (Позволяет перегенерировать отчет)\n" \
+    "4. /reports - получить список доступных отчетов\n" \
+    "5. /report - получить конкретный отчет из списка"
+    await update.message.reply_text(text)
 
 # ------------------- Настройка напоминания (ConversationHandler) -------------------
 FREQ, DAY_WEEK, DAY_MONTH, TIME_INPUT = range(4)
@@ -426,6 +539,29 @@ conv_handler = ConversationHandler(
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Любой текст сохраняем как запись за текущий период (в зависимости от частоты)."""
     user_id = update.effective_user.id
+    # Проверяем, ожидается ли ввод часового пояса
+    if context.user_data.get('awaiting_timezone'):
+        tz_value = update.message.text.strip()
+        try:
+            pytz_timezone(tz_value)   # проверка валидности
+        except:
+            await update.message.reply_text("Неверный часовой пояс. Попробуй ещё раз или выбери из списка.")
+            return
+        context.user_data.pop('awaiting_timezone')
+        await set_user_timezone(user_id, tz_value)
+        await upsert_user(user_id, timezone=tz_value)
+        user_new = await get_user(user_id)
+        if user_new and user_new[6] == tz_value:
+            schedule_reminder(context.application, user_new)
+            await update.message.reply_text(f"Часовой пояс {tz_value} установлен.")
+        return
+    if context.user_data.get('awaiting_timezone_change'):
+        tz_value = update.message.text.strip()
+        context.user_data.pop('awaiting_timezone_change')
+        await apply_timezone_change(user_id, tz_value, context)
+        return
+    
+    user_id = update.effective_user.id
     user = await get_user(user_id)
     if not user:
         await update.message.reply_text("Сначала зарегистрируйся: /start")
@@ -483,11 +619,27 @@ async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ------------------- Запуск приложения -------------------
+async def set_bot_commands(application: Application):
+    commands = [
+        BotCommand("start", "Регистрация и начало работы"),
+        BotCommand("set_reminder", "Настроить расписание напоминаний"),
+        BotCommand("summary", "Получить саммари за прошлый месяц"),
+        BotCommand("reports", "Список сохранённых отчётов"),
+        BotCommand("report", "Показать конкретный отчёт (пример: /report 2026 5)"),
+        BotCommand("time", "Показать текущее время системы и напоминания"),
+        BotCommand("jobs", "Список активных задач напоминаний (отладка)"),
+        BotCommand("set_timezone", "Изменить часовой пояс"),
+    ]
+    await application.bot.set_my_commands(commands)
+
+async def post_init_actions(application: Application):
+    await restore_reminders(application)
+    await set_bot_commands(application)
 
 def main():
     asyncio.run(init_db())
 
-    app = Application.builder().token(BOT_TOKEN).defaults(Defaults(tzinfo=timezone('Europe/Moscow'))).post_init(restore_reminders).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init_actions).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("summary", summary))
@@ -495,6 +647,10 @@ def main():
     app.add_handler(CommandHandler("time", debug_time))
     app.add_handler(CommandHandler("reports", list_reports))
     app.add_handler(CommandHandler("report", view_report))
+    app.add_handler(CallbackQueryHandler(set_timezone_callback, pattern="^tz="))
+    app.add_handler(CallbackQueryHandler(change_timezone_callback, pattern="^tz_change="))
+    app.add_handler(CommandHandler("set_timezone", change_timezone_command))
+    app.add_handler(CommandHandler("help", help))
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
