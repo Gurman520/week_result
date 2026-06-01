@@ -7,9 +7,11 @@ from os import getenv
 import ollama
 import asyncio
 from pytz import timezone as pytz_timezone
+import logging.handlers
 
 
 import aiosqlite
+from telegram.error import NetworkError, TimedOut
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Defaults,
@@ -27,8 +29,29 @@ load_dotenv()
 BOT_TOKEN = getenv('BOT_TOKEN')
 DB_NAME = getenv('DB_NAME')
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+# logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+# logger = logging.getLogger(__name__)
+
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+formatter = logging.Formatter(LOG_FORMAT)
+
+# Консольный вывод
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+# Файловый вывод с ротацией (10 МБ, 3 бэкапа)
+file_handler = logging.handlers.RotatingFileHandler(
+    "bot.log", maxBytes=10*1024*1024, backupCount=3, encoding='utf-8'
+)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+# Применяем тот же уровень ко всем логгерам PTB и apscheduler
+logging.getLogger('telegram').setLevel(logging.INFO)
+logging.getLogger('apscheduler').setLevel(logging.DEBUG)
 
 # ------------------- Работа с БД -------------------
 async def init_db():
@@ -639,7 +662,15 @@ async def post_init_actions(application: Application):
 def main():
     asyncio.run(init_db())
 
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init_actions).build()
+    # app = Application.builder().token(BOT_TOKEN).post_init(post_init_actions).build()
+    app = Application.builder() \
+        .token(BOT_TOKEN) \
+        .connect_timeout(30) \
+        .read_timeout(30) \
+        .write_timeout(30) \
+        .pool_timeout(30) \
+        .post_init(post_init_actions) \
+        .build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("summary", summary))
@@ -654,7 +685,20 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # app.run_polling(allowed_updates=Update.ALL_TYPES)
+    while True:
+        try:
+            app.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                close_loop=False
+            )
+        except (NetworkError, TimedOut, asyncio.TimeoutError) as e:
+            logger.error(f"Network error: {e}. Restarting in 10 seconds...")
+            time.sleep(10)
+        except Exception as e:
+            logger.critical(f"Unhandled exception: {e}", exc_info=True)
+            break
 
 if __name__ == "__main__":
     main()
