@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler, ContextTypes
-from handlers.common import cancel, get_user_tz
-from database import get_user, get_auto_report_configs
+from handlers.common import cancel
+from database import get_user
 from scheduler import schedule_auto_report
 import aiosqlite
 from config import Config
@@ -11,6 +11,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 AUTO_FREQ, AUTO_DAY_WEEK, AUTO_DAY_MONTH, AUTO_TIME_INPUT = range(4)
+DAY_NAMES = {
+    0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"
+}
 
 async def set_auto_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -93,8 +96,20 @@ async def auto_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tz_str = user.get('timezone', 'UTC')
     schedule_auto_report(context.application, user_id, freq, day_of_week, day_of_month, hour, minute, tz_str)
 
-    freq_text = {'week': 'раз в неделю', 'month': 'раз в месяц'}
-    await update.message.reply_text(f"Автоотчёт настроен: {freq_text[freq]} в {hour:02d}:{minute:02d}.")
+    time_str = f"{hour:02d}:{minute:02d}"
+    if freq == 'week':
+        day_name = DAY_NAMES[day_of_week]  # импортировать DAY_NAMES из reminders или общий
+        description = f"раз в неделю по {day_name}"
+    else:
+        if day_of_month > 28:
+            note = " (если в месяце меньше дней — в последний день)"
+        else:
+            note = ""
+        description = f"раз в месяц {day_of_month}-го числа{note}"
+
+    await update.message.reply_text(
+        f"Автоотчёт настроен: {description} в {time_str}."
+    )
     return ConversationHandler.END
 
 auto_report_conv = ConversationHandler(

@@ -12,6 +12,9 @@ from scheduler import schedule_reminder
 logger = logging.getLogger(__name__)
 
 FREQ, CHOOSE_DAYS, DAY_WEEK, DAY_MONTH, TIME_INPUT = range(5)
+DAY_NAMES = {
+    0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"
+}
 
 async def set_reminder_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сбрасывает любые предыдущие диалоги и запускает настройку."""
@@ -140,9 +143,30 @@ async def time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_new = await get_user(user_id)
     schedule_reminder(context.application, user_new)
 
-    freq_text = {'day': 'каждый день', 'week': 'раз в неделю', 'month': 'раз в месяц'}
-    await update.message.reply_text(f"Настройки сохранены! Буду напоминать {freq_text[freq]} в {hour:02d}:{minute:02d}.")
-    logger.info(f"Reminder set for user {user_id}: {freq} at {hour:02d}:{minute:02d}")
+    # Формируем информативное описание расписания
+    time_str = f"{hour:02d}:{minute:02d}"
+    if freq == 'day':
+        if custom_days:
+            selected = list(map(int, custom_days.split(',')))
+            days_str = ', '.join(DAY_NAMES[d] for d in selected)
+            description = f"по выбранным дням ({days_str})"
+        else:
+            description = "каждый день"
+    elif freq == 'week':
+        day_name = DAY_NAMES[day_of_week]
+        description = f"каждую неделю по {day_name}"
+    elif freq == 'month':
+        # Учитываем возможный перенос на последний день месяца
+        if day_of_month > 28:
+            note = " (если в месяце меньше дней — в последний день)"
+        else:
+            note = ""
+        description = f"каждый месяц {day_of_month}-го числа{note}"
+
+    await update.message.reply_text(
+        f"Настройки сохранены! Буду напоминать {description} в {time_str}."
+    )
+    logger.info(f"Reminder set for user {user_id}: {freq} at {time_str}")
     return ConversationHandler.END
 
 reminder_conv = ConversationHandler(

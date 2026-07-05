@@ -31,8 +31,6 @@ async def set_bot_commands(application: Application):
         BotCommand("set_auto_report", "Настроить автоматический отчёт"),
         BotCommand("reports", "Список сохранённых отчётов"),
         BotCommand("report", "Показать конкретный отчёт"),
-        BotCommand("time", "Текущее время системы"),
-        BotCommand("jobs", "Активные задачи (отладка)"),
         BotCommand("set_timezone", "Изменить часовой пояс"),
         BotCommand("vacation", "Включить режим отпуска"),
     ]
