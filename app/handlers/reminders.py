@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 FREQ, CHOOSE_DAYS, DAY_WEEK, DAY_MONTH, TIME_INPUT = range(5)
 DAY_NAMES = {
-    0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"
+    0: "Вс", 1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб"
 }
 
 async def set_reminder_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -40,13 +40,13 @@ async def freq_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if freq == 'day':
         keyboard = [
-            [InlineKeyboardButton("Пн", callback_data="day_0"),
-             InlineKeyboardButton("Вт", callback_data="day_1"),
-             InlineKeyboardButton("Ср", callback_data="day_2")],
-            [InlineKeyboardButton("Чт", callback_data="day_3"),
-             InlineKeyboardButton("Пт", callback_data="day_4"),
-             InlineKeyboardButton("Сб", callback_data="day_5")],
-            [InlineKeyboardButton("Вс", callback_data="day_6")],
+            [InlineKeyboardButton("Пн", callback_data="day_1"),
+             InlineKeyboardButton("Вт", callback_data="day_2"),
+             InlineKeyboardButton("Ср", callback_data="day_3")],
+            [InlineKeyboardButton("Чт", callback_data="day_4"),
+             InlineKeyboardButton("Пт", callback_data="day_5"),
+             InlineKeyboardButton("Сб", callback_data="day_6")],
+            [InlineKeyboardButton("Вс", callback_data="day_0")],
             [InlineKeyboardButton("✅ Все дни", callback_data="days_all"),
              InlineKeyboardButton("Готово", callback_data="days_done")]
         ]
@@ -55,10 +55,10 @@ async def freq_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CHOOSE_DAYS
     elif freq == 'week':
         keyboard = [
-            [InlineKeyboardButton("Пн", callback_data="0"), InlineKeyboardButton("Вт", callback_data="1"),
-             InlineKeyboardButton("Ср", callback_data="2"), InlineKeyboardButton("Чт", callback_data="3"),
-             InlineKeyboardButton("Пт", callback_data="4")],
-            [InlineKeyboardButton("Сб", callback_data="5"), InlineKeyboardButton("Вс", callback_data="6")]
+            [InlineKeyboardButton("Пн", callback_data="1"), InlineKeyboardButton("Вт", callback_data="2"),
+             InlineKeyboardButton("Ср", callback_data="3"), InlineKeyboardButton("Чт", callback_data="4"),
+             InlineKeyboardButton("Пт", callback_data="5")],
+            [InlineKeyboardButton("Сб", callback_data="6"), InlineKeyboardButton("Вс", callback_data="0")]
         ]
         await query.edit_message_text("Выбери день недели:", reply_markup=InlineKeyboardMarkup(keyboard))
         return DAY_WEEK

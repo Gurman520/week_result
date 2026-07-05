@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 AUTO_FREQ, AUTO_DAY_WEEK, AUTO_DAY_MONTH, AUTO_TIME_INPUT = range(4)
 DAY_NAMES = {
-    0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"
+    0: "Вс", 1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб"
 }
 
 async def set_auto_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -31,10 +31,10 @@ async def auto_freq_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['auto_freq'] = freq
     if freq == 'week':
         keyboard = [
-            [InlineKeyboardButton("Пн", callback_data="0"), InlineKeyboardButton("Вт", callback_data="1"),
-             InlineKeyboardButton("Ср", callback_data="2"), InlineKeyboardButton("Чт", callback_data="3"),
-             InlineKeyboardButton("Пт", callback_data="4")],
-            [InlineKeyboardButton("Сб", callback_data="5"), InlineKeyboardButton("Вс", callback_data="6")]
+            [InlineKeyboardButton("Пн", callback_data="1"), InlineKeyboardButton("Вт", callback_data="2"),
+             InlineKeyboardButton("Ср", callback_data="3"), InlineKeyboardButton("Чт", callback_data="4"),
+             InlineKeyboardButton("Пт", callback_data="5")],
+            [InlineKeyboardButton("Сб", callback_data="6"), InlineKeyboardButton("Вс", callback_data="0")]
         ]
         await query.edit_message_text("В какой день недели присылать отчёт?", reply_markup=InlineKeyboardMarkup(keyboard))
         return AUTO_DAY_WEEK

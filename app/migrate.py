@@ -85,20 +85,23 @@ async def migrate():
     print("Updated custom_days for existing users.")
     
     # Автоматическое уведомление об обновлении (только если ещё не было)
-    cursor = await db.execute("SELECT id FROM broadcasts WHERE message_text LIKE 'Бот обновлён до версии 1%'")
+    cursor = await db.execute("SELECT id FROM broadcasts WHERE message_text LIKE 'Бот обновлён до версии 2.0.0!%'")
     if not await cursor.fetchone():
         from version import VERSION  # предполагаем, что версия доступна
         update_message = (
             f"Бот обновлён до версии {VERSION}!\n\n"
             "Что нового:\n"
-            "- Гибкое расписание напоминаний (выбор конкретных дней недели)\n"
-            "- Режим отпуска (/vacation)\n"
-            "- Автоматические еженедельные и ежемесячные отчёты\n"
-            "- Улучшенная стабильность и логирование\n\n"
+            "- Исправлен баг с запуском процессов в раз неделю из-за расхождения дней недели\n"
             "Посмотрите /set_reminder и /set_auto_report, чтобы настроить уведомления."
         )
         await db.execute("INSERT INTO broadcasts (message_text) VALUES (?)", (update_message,))
         print("Added update broadcast message.")
+
+    # Конвертация дней недели из старого формата (0=пн) в новый (0=вс)
+    # Применяем ко всем пользователям, у которых day_of_week не равен NULL
+    await db.execute("UPDATE users SET day_of_week = (day_of_week + 1) % 7 WHERE day_of_week IS NOT NULL")
+    await db.execute("UPDATE auto_reports SET day_of_week = (day_of_week + 1) % 7 WHERE day_of_week IS NOT NULL")
+    print("Converted day_of_week to new format (0=Sun).")
 
     await db.commit()
     await db.close()

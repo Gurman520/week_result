@@ -12,6 +12,10 @@ import llm
 logger = logging.getLogger(__name__)
 user_jobs = {}
 
+def ptb_weekday(now: datetime) -> int:
+    """Возвращает день недели в формате (0=вс, 1=пн, ..., 6=сб)."""
+    return now.isoweekday() % 7
+
 def last_day_of_month(year: int, month: int) -> int:
     if month == 12:
         return 31
@@ -93,7 +97,7 @@ def schedule_reminder(application, user: dict):
         custom_days = get_custom_days(user)
         async def daily_check(context):
             now = datetime.now(tz=tz) if tz else datetime.now()
-            if now.weekday() in custom_days and not is_on_vacation(user, now):
+            if ptb_weekday(now) in custom_days and not is_on_vacation(user, now):
                 await remind_user(context)
         job = application.job_queue.run_daily(daily_check, time=when_time, data=job_data, name=job_id)
     elif freq == 'month':
@@ -104,12 +108,12 @@ def schedule_reminder(application, user: dict):
             if now.day == target and not is_on_vacation(user, now):
                 await remind_user(context)
         job = application.job_queue.run_daily(monthly_check, time=when_time, data=job_data, name=job_id)
-    elif freq == 'month':
-        async def monthly_check(context):
+    elif freq == 'week':
+        async def weekly_check(context):
             now = datetime.now(tz=tz) if tz else datetime.now()
-            if now.day == day_of_month and not is_on_vacation(user, now):
+            if ptb_weekday(now) == day_of_week and not is_on_vacation(user, now):
                 await remind_user(context)
-        job = application.job_queue.run_daily(monthly_check, time=when_time, data=job_data, name=job_id)
+        job = application.job_queue.run_daily(weekly_check, time=when_time, days=(day_of_week,), data=job_data, name=job_id)
     else:
         return
     user_jobs[job_id] = job
