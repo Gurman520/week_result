@@ -27,7 +27,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info(f"New user {user_id} prompted for timezone")
     else:
-        tz = get_user_tz(user)
+        tz = user.get('timezone', 'UTC')
         await update.message.reply_text(
             f"Ты уже зарегистрирован. Часовой пояс: {tz}.\n"
             "Используй /set_reminder для настройки напоминаний.\n"

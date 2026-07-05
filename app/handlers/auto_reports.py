@@ -36,7 +36,7 @@ async def auto_freq_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("В какой день недели присылать отчёт?", reply_markup=InlineKeyboardMarkup(keyboard))
         return AUTO_DAY_WEEK
     else:
-        await query.edit_message_text("Введи число месяца (1-28):")
+        await query.edit_message_text("Введи число месяца (1-31). Если дней меньше, отчёт будет отправлен в последний день.")
         return AUTO_DAY_MONTH
 
 async def auto_day_week_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,12 +49,15 @@ async def auto_day_week_chosen(update: Update, context: ContextTypes.DEFAULT_TYP
 async def auto_day_month_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         day = int(update.message.text)
-        if 1 <= day <= 28:
+        if 1 <= day <= 31:
             context.user_data['auto_day_month'] = day
-            await update.message.reply_text("Введи время в формате ЧЧ:ММ (например, 09:00):")
+            await update.message.reply_text(
+                "Введи время в формате ЧЧ:ММ (например, 09:00).\n"
+                "Если в каком-то месяце меньше дней, отчёт придёт в последний день месяца."
+            )
             return AUTO_TIME_INPUT
         else:
-            await update.message.reply_text("Число должно быть от 1 до 28.")
+            await update.message.reply_text("Число должно быть от 1 до 31.")
             return AUTO_DAY_MONTH
     except ValueError:
         await update.message.reply_text("Введи число.")
@@ -87,7 +90,7 @@ async def auto_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await db.commit()
 
     user = await get_user(user_id)
-    tz_str = get_user_tz(user)
+    tz_str = user.get('timezone', 'UTC')
     schedule_auto_report(context.application, user_id, freq, day_of_week, day_of_month, hour, minute, tz_str)
 
     freq_text = {'week': 'раз в неделю', 'month': 'раз в месяц'}

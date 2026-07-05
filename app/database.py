@@ -2,7 +2,12 @@ import aiosqlite
 from config import Config
 from datetime import datetime, timedelta
 
+
 DB_NAME = Config.DB_NAME
+
+def _row_to_dict(cursor, row):
+    """Преобразует кортеж строки в словарь, используя описание курсора."""
+    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -53,12 +58,21 @@ async def init_db():
                 last_run TIMESTAMP
             );
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS broadcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_text TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
         await db.commit()
 
 async def get_user(user_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        return await cursor.fetchone()
+        row = await cursor.fetchone()
+        return _row_to_dict(cursor, row) if row else None
 
 async def upsert_user(user_id: int, **kwargs):
     columns = ', '.join(kwargs.keys())
@@ -120,7 +134,8 @@ async def save_report(user_id: int, year: int, month: int, content: str):
 async def get_all_active_users():
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT * FROM users WHERE active = 1")
-        return await cursor.fetchall()
+        rows = await cursor.fetchall()
+        return [_row_to_dict(cursor, row) for row in rows]
 
 async def get_auto_report_configs():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -133,10 +148,24 @@ async def get_auto_report_config(user_id: int):
         return await cursor.fetchone()
 
 async def get_entries_for_dates(user_id: int, start_date: str, end_date: str):
-    """Возвращает список записей пользователя между start_date и end_date (включая start, исключая end)."""
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
             "SELECT content FROM entries WHERE user_id=? AND period_start >= ? AND period_start < ?",
             (user_id, start_date, end_date)
         )
         return [row[0] for row in await cursor.fetchall() if row[0]]
+
+async def create_broadcast(text: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT INTO broadcasts (message_text) VALUES (?)", (text,))
+        await db.commit()
+
+async def get_pending_broadcasts():
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT id, message_text FROM broadcasts WHERE status='pending'")
+        return await cursor.fetchall()
+
+async def mark_broadcast_sent(broadcast_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE broadcasts SET status='sent' WHERE id=?", (broadcast_id,))
+        await db.commit()

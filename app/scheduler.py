@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, date
 from pytz import timezone as pytz_timezone
 from telegram.ext import ContextTypes
 import aiosqlite
@@ -12,21 +12,25 @@ import llm
 logger = logging.getLogger(__name__)
 user_jobs = {}
 
-def get_user_tz(user_data) -> str:
-    # user_data: (id, freq, day_of_week, day_of_month, time_hour, time_minute, timezone, custom_days, vacation_until, active)
-    if len(user_data) > 6 and user_data[6]:
-        return user_data[6]
-    return 'UTC'
+def last_day_of_month(year: int, month: int) -> int:
+    if month == 12:
+        return 31
+    return (date(year, month + 1, 1) - timedelta(days=1)).day
 
-def get_custom_days(user_data) -> set:
-    if len(user_data) > 7 and user_data[7]:
-        return set(map(int, user_data[7].split(',')))
-    return set(range(7))
+def get_user_tz(user: dict) -> str:
+    return user.get('timezone', 'UTC')
 
-def is_on_vacation(user_data, now: datetime) -> bool:
-    if len(user_data) > 8 and user_data[8]:
+def get_custom_days(user: dict) -> set:
+    custom_days_str = user.get('custom_days', '')
+    if custom_days_str:
+        return set(map(int, custom_days_str.split(',')))
+    return set(range(7))  # все дни
+
+def is_on_vacation(user: dict, now: datetime) -> bool:
+    vacation_until = user.get('vacation_until')
+    if vacation_until:
         try:
-            until = datetime.strptime(user_data[8], '%Y-%m-%d').date()
+            until = datetime.strptime(vacation_until, '%Y-%m-%d').date()
             return now.date() <= until
         except:
             pass
@@ -67,14 +71,14 @@ def get_period_start(freq: str, now: datetime = None) -> str:
 def build_job_id(user_id: int, prefix: str = "remind") -> str:
     return f"{prefix}_{user_id}"
 
-def schedule_reminder(application, user_data):
-    user_id = user_data[0]
-    freq = user_data[1]
-    day_of_week = user_data[2]
-    day_of_month = user_data[3]
-    t_hour = user_data[4]
-    t_minute = user_data[5]
-    tz_str = get_user_tz(user_data)
+def schedule_reminder(application, user: dict):
+    user_id = user['user_id']
+    freq = user['frequency']
+    day_of_week = user['day_of_week']
+    day_of_month = user['day_of_month']
+    t_hour = user['time_hour']
+    t_minute = user['time_minute']
+    tz_str = get_user_tz(user)
 
     job_id = build_job_id(user_id)
     if job_id in user_jobs:
@@ -86,23 +90,24 @@ def schedule_reminder(application, user_data):
     job_data = {'user_id': user_id, 'freq': freq}
 
     if freq == 'day':
-        custom_days = get_custom_days(user_data)
+        custom_days = get_custom_days(user)
         async def daily_check(context):
             now = datetime.now(tz=tz) if tz else datetime.now()
-            if now.weekday() in custom_days and not is_on_vacation(user_data, now):
+            if now.weekday() in custom_days and not is_on_vacation(user, now):
                 await remind_user(context)
         job = application.job_queue.run_daily(daily_check, time=when_time, data=job_data, name=job_id)
-    elif freq == 'week':
-        async def weekly_check(context):
-            now = datetime.now(tz=tz) if tz else datetime.now()
-            if not is_on_vacation(user_data, now):
-                await remind_user(context)
-        job = application.job_queue.run_daily(weekly_check, time=when_time, days=(day_of_week,),
-                                              data=job_data, name=job_id)
     elif freq == 'month':
         async def monthly_check(context):
             now = datetime.now(tz=tz) if tz else datetime.now()
-            if now.day == day_of_month and not is_on_vacation(user_data, now):
+            last_day = last_day_of_month(now.year, now.month)
+            target = min(day_of_month, last_day)
+            if now.day == target and not is_on_vacation(user, now):
+                await remind_user(context)
+        job = application.job_queue.run_daily(monthly_check, time=when_time, data=job_data, name=job_id)
+    elif freq == 'month':
+        async def monthly_check(context):
+            now = datetime.now(tz=tz) if tz else datetime.now()
+            if now.day == day_of_month and not is_on_vacation(user, now):
                 await remind_user(context)
         job = application.job_queue.run_daily(monthly_check, time=when_time, data=job_data, name=job_id)
     else:
@@ -167,7 +172,9 @@ def schedule_auto_report(application, user_id: int, freq: str, day_of_week: int,
     else:
         async def monthly_auto_report(context):
             now = datetime.now(tz=tz) if tz else datetime.now()
-            if now.day == day_of_month:
+            last_day = last_day_of_month(now.year, now.month)
+            target = min(day_of_month, last_day)
+            if now.day == target:
                 await send_auto_report(context)
         application.job_queue.run_daily(monthly_auto_report, time=when_time, name=job_id)
 

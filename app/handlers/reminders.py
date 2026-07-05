@@ -60,7 +60,7 @@ async def freq_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Выбери день недели:", reply_markup=InlineKeyboardMarkup(keyboard))
         return DAY_WEEK
     elif freq == 'month':
-        await query.edit_message_text("Введи число месяца (1-28):")
+        await query.edit_message_text("Введи число месяца (1-31). Если дней меньше, напоминание будет в последний день.")
         return DAY_MONTH
 
 async def choose_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,12 +104,15 @@ async def day_week_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def day_month_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         day = int(update.message.text)
-        if 1 <= day <= 28:
+        if 1 <= day <= 31:
             context.user_data['day_month'] = day
-            await update.message.reply_text("Введи время в формате ЧЧ:ММ (например, 18:00):")
+            await update.message.reply_text(
+                "Введи время в формате ЧЧ:ММ (например, 18:00).\n"
+                "Если в каком-то месяце меньше дней, напоминание придёт в последний день месяца."
+            )
             return TIME_INPUT
         else:
-            await update.message.reply_text("Число должно быть от 1 до 28. Попробуй ещё раз:")
+            await update.message.reply_text("Число должно быть от 1 до 31. Попробуй ещё раз:")
             return DAY_MONTH
     except ValueError:
         await update.message.reply_text("Введи число. Например: 15")

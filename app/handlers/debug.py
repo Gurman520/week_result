@@ -10,12 +10,11 @@ async def debug_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.utcnow()
     now_local = datetime.now()
     user = await get_user(user_id)
-    text = f"• UTC сейчас: {now_utc.strftime('%Y-%m-%d %H:%M:%S')}\n"
-    text += f"• Локальное время системы: {now_local.strftime('%Y-%m-%d %H:%M:%S')}\n"
+    text = ...
     if user:
-        freq = user[1]
-        h, m = user[4], user[5]
-        tz = get_user_tz(user)
+        freq = user['frequency']
+        h, m = user['time_hour'], user['time_minute']   # было user[4], user[5]
+        tz = user.get('timezone', 'UTC')
         text += f"• Настроенное время: {h:02d}:{m:02d} (частота: {freq}, пояс: {tz})\n"
         job_id = build_job_id(user_id)
         if job_id in user_jobs:
