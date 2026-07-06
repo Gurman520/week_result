@@ -40,7 +40,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = update.message.text
-    freq = user['freq']
+    freq = user['frequency']
     period_start = get_period_start(freq)
     await save_entry(user_id, text, period_start)
     logger.info(f"Entry saved for user {user_id}, period {period_start}")
