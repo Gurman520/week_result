@@ -35,7 +35,6 @@
 - python-telegram-bot (с `job-queue` для планирования)
 - aiosqlite (асинхронная работа с SQLite)
 - Ollama (локальный запуск LLM)
-- pytz (часовые пояса)
 - python-dotenv (конфигурация через `.env`)
 
 ## Установка и запуск
@@ -63,12 +62,11 @@ pip install -r requirements.txt
 Создайте в корне файл .env со следующим содержимым:
 
 ```text
-BOT_TOKEN=<ваш_токен_от_BotFather>
+BOT_TOKEN=<ваш_токен>
 DB_NAME=tracker.db
 LOG_LEVEL=INFO
 ADMIN_IDS=123456789
 MODEL_NAME=qwen2.5:0.5b-instruct-q4_K_M
-BOT_TOKEN — токен Telegram-бота.
 ```
 `ADMIN_IDS` — ID администраторов через запятую.
 
@@ -113,10 +111,5 @@ services:
       - ./bot.log:/app/bot.log
 ```
 Перед запуском в Docker также необходимо выполнить миграцию: `docker compose run bot python migrate.py.`
-
-Важные замечания
-Перед первым запуском убедитесь, что сервер Ollama работает и модель загружена (ollama pull <MODEL_NAME>).
-
-При обновлении версии может потребоваться повторная миграция (python migrate.py) — она безопасна и не затронет существующие данные.
 
 Логи записываются в bot.log, уровень детализации настраивается через `LOG_LEVEL`.
