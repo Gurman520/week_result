@@ -1,12 +1,12 @@
-import asyncio
+import llm
 import logging
-from datetime import datetime, time, timedelta, date
-from pytz import timezone as pytz_timezone
-from telegram.ext import ContextTypes
+import database
 import aiosqlite
 from config import Config
-import database
-import llm
+from telegram.ext import ContextTypes
+from handlers.notify_adm import notify_admins
+from pytz import timezone as pytz_timezone
+from datetime import datetime, time, timedelta, date
 
 
 logger = logging.getLogger(__name__)
@@ -137,8 +137,12 @@ def schedule_auto_report(application, user_id: int, freq: str, day_of_week: int,
     when_time = time(hour=hour, minute=minute, tzinfo=tz) if tz else time(hour=hour, minute=minute)
 
     async def send_auto_report(context: ContextTypes.DEFAULT_TYPE):
+        logger.info(f"Auto report triggered for user {user_id}")
         now = datetime.now(tz=tz) if tz else datetime.now()
-        if await is_on_vacation(user_id, now):
+        logger.info(f"Current time: {now}, weekday={ptb_weekday(now)}, day={now.day}")
+        user = await database.get_user(user_id)
+        logger.info(f"Auto report GET user {user}")
+        if is_on_vacation(user, now):
             return
         if freq == 'week':
             end = now - timedelta(days=now.weekday() + 1)   # прошлое воскресенье
@@ -156,19 +160,21 @@ def schedule_auto_report(application, user_id: int, freq: str, day_of_week: int,
                 year = now.year
                 month = now.month - 1
             period_str = f"{month:02d}.{year}"
-
-        entries = await database.get_entries_for_month(user_id, year, month)
+            entries = await database.get_entries_for_month(user_id, year, month)
         if not entries:
             logger.info(f"No entries for auto report user {user_id} for {period_str}")
+            await context.bot.send_message(chat_id=user_id, text=f"За {period_str} нет записей, отчёт не сформирован.")
             return
 
         combined = "\n---\n".join(entries)
         try:
             report_text = await llm.generate_summary(combined)
-            await database.save_report(user_id, year, month, report_text)
+            await database.save_report(user_id, freq, start.strftime('%Y-%m-%d'), report_text)
             await context.bot.send_message(chat_id=user_id, text=f"Твой автоотчёт за {period_str}:\n\n{report_text}")
             logger.info(f"Auto report sent to user {user_id} for {period_str}")
         except Exception as e:
+            await context.bot.send_message(chat_id=user_id, text=f"Кажется что-то сломалось при формировании твоего отчета.\nСообщение об ошибке уже отправлено разработчику")
+            await notify_admins(context.bot, f"Ошибка автоотчёта для user {user_id}: {e}")
             logger.error(f"Failed auto report for user {user_id}: {e}")
 
     if freq == 'week':
