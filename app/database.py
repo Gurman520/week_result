@@ -39,11 +39,11 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                year INTEGER NOT NULL,
-                month INTEGER NOT NULL,
+                report_type TEXT NOT NULL DEFAULT 'month',  -- 'week' или 'month'
+                period_start TEXT NOT NULL,                -- первый день периода (YYYY-MM-DD)
                 content TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, year, month)
+                UNIQUE(user_id, period_start, report_type)
             );
         """)
         await db.execute("""
@@ -122,14 +122,32 @@ async def get_entries_for_month(user_id: int, year: int, month: int):
         )
         return [row[0] for row in await cursor.fetchall() if row[0]]
 
-async def save_report(user_id: int, year: int, month: int, content: str):
+async def save_report(user_id: int, report_type: str, period_start: str, content: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
-            "INSERT INTO reports (user_id, year, month, content) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(user_id, year, month) DO UPDATE SET content=excluded.content",
-            (user_id, year, month, content)
+            "INSERT INTO reports (user_id, report_type, period_start, content) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, period_start, report_type) DO UPDATE SET content=excluded.content",
+            (user_id, report_type, period_start, content)
         )
         await db.commit()
+
+async def get_user_reports(user_id: int):
+    """Возвращает список (id, report_type, period_start) для пользователя, отсортированный от новых к старым."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT id, report_type, period_start FROM reports WHERE user_id=? ORDER BY period_start DESC",
+            (user_id,)
+        )
+        return await cursor.fetchall()
+
+async def get_report_by_id(report_id: int):
+    """Возвращает полный отчёт по ID, если он принадлежит пользователю (проверка в хендлере)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT user_id, report_type, period_start, content FROM reports WHERE id=?",
+            (report_id,)
+        )
+        return await cursor.fetchone()
 
 async def get_all_active_users():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -141,11 +159,6 @@ async def get_auto_report_configs():
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT * FROM auto_reports WHERE enabled=1")
         return await cursor.fetchall()
-
-async def get_auto_report_config(user_id: int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT * FROM auto_reports WHERE user_id=?", (user_id,))
-        return await cursor.fetchone()
 
 async def get_entries_for_dates(user_id: int, start_date: str, end_date: str):
     async with aiosqlite.connect(DB_NAME) as db:
