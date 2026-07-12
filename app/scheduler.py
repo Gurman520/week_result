@@ -4,6 +4,7 @@ import database
 import aiosqlite
 from config import Config
 from telegram.ext import ContextTypes
+from handlers.notify_adm import notify_admins
 from pytz import timezone as pytz_timezone
 from datetime import datetime, time, timedelta, date
 
@@ -173,6 +174,7 @@ def schedule_auto_report(application, user_id: int, freq: str, day_of_week: int,
             logger.info(f"Auto report sent to user {user_id} for {period_str}")
         except Exception as e:
             await context.bot.send_message(chat_id=user_id, text=f"Кажется что-то сломалось при формировании твоего отчета.\nСообщение об ошибке уже отправлено разработчику")
+            await notify_admins(context.bot, f"Ошибка автоотчёта для user {user_id}: {e}")
             logger.error(f"Failed auto report for user {user_id}: {e}")
 
     if freq == 'week':
