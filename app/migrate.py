@@ -164,6 +164,19 @@ async def migrate(era):
                     );
                 """)
                 print("Created reports table (no old data to migrate)")
+            
+            # Автоматическое уведомление об обновлении (только если ещё не было)
+            cursor = await db.execute("SELECT id FROM broadcasts WHERE message_text LIKE 'Бот обновлён до версии 2.1.0!%'")
+            if not await cursor.fetchone():
+                from version import VERSION  # предполагаем, что версия доступна
+                update_message = (
+                    f"Бот обновлён до версии {VERSION}!\n\n"
+                    "Что нового:\n"
+                    "- Исправлеена ошибка при формировании еженедельного отчета\n"
+                    "- Добавлены сообщения при возникновении ошибок в работе бота."
+                )
+                await db.execute("INSERT INTO broadcasts (message_text) VALUES (?)", (update_message,))
+                print("Added update broadcast message.")
 
         await db.commit()
         print("Migration completed.")
